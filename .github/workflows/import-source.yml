@@ -1,0 +1,46 @@
+name: Import verified source archive
+on:
+  push:
+    paths:
+      - .github/workflows/import-source.yml
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  import:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Verify and expand the published source
+        env:
+          ARCHIVE: douyin-creator-extractor-0.3.22.zip
+          PREFIX: douyin-creator-extractor
+          SHA256: d3bda65857e04658868874c1528047a98663a7554c2b3310160af7021272f9d6
+        run: |
+          python3 - <<'PY'
+          import hashlib, os, pathlib, zipfile
+          archive = pathlib.Path(os.environ['ARCHIVE'])
+          assert hashlib.sha256(archive.read_bytes()).hexdigest() == os.environ['SHA256']
+          with zipfile.ZipFile(archive) as source:
+              for item in source.infolist():
+                  path = pathlib.PurePosixPath(item.filename)
+                  assert not path.is_absolute() and '..' not in path.parts
+                  assert path.parts[0] == os.environ['PREFIX']
+                  relative = pathlib.Path(*path.parts[1:])
+                  assert relative.parts and relative.parts[0] not in ('.git', '.github')
+                  if item.is_dir():
+                      relative.mkdir(parents=True, exist_ok=True)
+                  else:
+                      relative.parent.mkdir(parents=True, exist_ok=True)
+                      relative.write_bytes(source.read(item))
+          PY
+      - name: Commit editable source files
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add --all
+          if ! git diff --cached --quiet; then
+            git commit -m 'Import editable source from verified release archive'
+            git push origin HEAD:main
+          fi
